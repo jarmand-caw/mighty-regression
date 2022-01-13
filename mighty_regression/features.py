@@ -23,7 +23,7 @@ class FeatureSelection(object):
         if type(target) == list:
             self.target = target
         else:
-            self.target = list(target)
+            self.target = [target]
 
         if features is None:
             self.features = [x for x in self.df.columns if x not in self.target]
@@ -96,7 +96,7 @@ class FeatureSelection(object):
         if len(features_to_examine) == 0:
             logger.info("All of your features improve performance. Likely makes other feature selection methods moot.")
             self.forward_selection_features = starting_features
-            return starting_features
+            return starting_features, best_r2
 
         curr_best_feature = None
         for feature in features_to_examine:
@@ -113,7 +113,7 @@ class FeatureSelection(object):
         if curr_best_feature is None:
             self.forward_selection_features = starting_features
             logger.info("Your forward selection features are {}.".format(starting_features))
-            return self.forward_selection_features
+            return self.forward_selection_features, best_r2
 
         starting_features.append(curr_best_feature)
         return self.forward_selection(cv_type, num_folds, random, starting_features, best_r2)
@@ -146,7 +146,7 @@ class FeatureSelection(object):
         if len(features_to_examine_removal) == 0:
             self.backward_selection_features = features_to_examine_removal
             logger.info("Backward selection found that none of your features are any good. That sucks.")
-            return []
+            return [], best_r2
 
         curr_best_removed = None
         for feature in features_to_examine_removal:
@@ -163,7 +163,7 @@ class FeatureSelection(object):
         if curr_best_removed is None:
             self.backward_selection_features = features_to_examine_removal
             logger.info("Your backward selection features are {}.".format(features_to_examine_removal))
-            return features_to_examine_removal
+            return features_to_examine_removal, best_r2
         already_removed.append(curr_best_removed)
         return self.backward_selection(cv_type, num_folds, random, already_removed, best_r2)
 
@@ -195,14 +195,14 @@ class FeatureSelection(object):
                 best_r2 = r2
                 best_combination = feature_combination
 
-        return best_combination
+        return best_combination, best_r2
 
     def lasso_selection(
             self,
             num_features=None,
             cv_type="fold",
             num_folds=5,
-            random=True,
+            random=True
     ):
         scaler = MinMaxScaler()
         X = self.df[self.features]
@@ -230,7 +230,10 @@ class FeatureSelection(object):
         # If you want a specified number of features, then just return
         if num_features is not None:
             self.lasso_selection_features = feature_dict[num_features]
-            return feature_dict[num_features]
+            X = self.df[self.lasso_selection_features]
+            y = self.df[self.target]
+            r2 = self.test_metric(X, y, cv_type, num_folds, random)
+            return feature_dict[num_features], r2
 
         # Else, lets find the combination with the best testing r2
         best_feature_set = None
@@ -245,7 +248,7 @@ class FeatureSelection(object):
                     best_feature_set = feature_combination
 
         self.lasso_selection_features = best_feature_set
-        return best_feature_set
+        return best_feature_set, best_r2_score
 
     def bagged_selection(
             self,
@@ -267,5 +270,7 @@ class FeatureSelection(object):
 
         all_features = [k for k,v in feature_count_dict.items() if v >= occurence_cutoff]
         return all_features, feature_count_dict
+
+
 
 

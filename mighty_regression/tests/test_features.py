@@ -9,17 +9,19 @@ def test_forward_selection(data):
         data,
         ["SalePrice"],
     )
-    best_features = selector.forward_selection(cv_type="fold", num_folds=3)
-    logger.info(selector.forward_selection_features)
+    best_features, best_r2 = selector.forward_selection(cv_type="fold", num_folds=3)
     logger.info(best_features)
+    logger.info(best_r2)
     assert len(best_features) > 0
 
-    best_features = selector.forward_selection(cv_type="loo")
+    best_features, best_r2 = selector.forward_selection(cv_type="loo")
     logger.info(best_features)
+    logger.info(best_r2)
     assert len(best_features) > 0
 
-    best_features = selector.forward_selection(cv_type=0.25, random=True)
+    best_features, best_r2 = selector.forward_selection(cv_type=0.25, random=True)
     logger.info(best_features)
+    logger.info(best_r2)
     assert len(best_features) > 0
 
 def test_backward_selection(data):
@@ -28,8 +30,9 @@ def test_backward_selection(data):
         ["SalePrice"],
     )
 
-    best_features = selector.backward_selection(cv_type="fold", num_folds=3)
+    best_features, best_r2 = selector.backward_selection(cv_type="fold", num_folds=3)
     logger.info(best_features)
+    logger.info(best_r2)
     assert len(best_features) > 0
 
 def test_combinatorics_selection(data):
@@ -38,8 +41,9 @@ def test_combinatorics_selection(data):
         ["SalePrice"],
     )
 
-    best_features = selector.combinatorics_selection(3, cv_type="fold", num_folds=3)
+    best_features, best_r2 = selector.combinatorics_selection(3, cv_type="fold", num_folds=3)
     logger.info(best_features)
+    logger.info(best_r2)
     assert len(best_features) > 0
 
 
@@ -49,8 +53,9 @@ def test_lasso_selection(data):
         ["SalePrice"],
     )
 
-    best_features = selector.lasso_selection(cv_type="fold", num_folds=3)
+    best_features, best_r2 = selector.lasso_selection(cv_type="fold", num_folds=3)
     logger.info(best_features)
+    logger.info(best_r2)
     assert len(best_features) > 0
 
 def test_bagged_selection(data):
