@@ -11,10 +11,10 @@ def test_bfws(data):
     )
 
     best_alpha, best_features, best_r2 = ridger.brute_force_with_selection(
-        "backward",
+        "lasso",
         0.25,
     )
     logger.info(best_alpha)
     logger.info(best_features)
     logger.info(best_r2)
-    assert len(best_features)>0
+    assert len(best_features) > 0

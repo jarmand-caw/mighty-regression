@@ -36,6 +36,33 @@ class FeatureSelection(object):
         self.backward_selection_features = None
         self.lasso_selection_features = None
 
+        self.interaction_features = None
+
+    def create_interaction_features(self, handle_div_zero="fill0"):
+        interaction_features = []
+
+        combinations_object = itertools.combinations(self.features, 2)
+        combinations_list = [list(x) for x in combinations_object]
+        for feature_set in combinations_list:
+            feature_name = "*".join(feature_set)
+            interaction_features.append(feature_name)
+            self.df[feature_name] = self.df[feature_set[0]]*self.df[feature_set[1]]
+
+        permutations_object = itertools.permutations(self.features, 2)
+        permutations_list = [list(x) for x in permutations_object]
+        for feature_set in permutations_list:
+            feature_name = "/".join(feature_set)
+            interaction_features.append(feature_name)
+            self.df[feature_name] = self.df[feature_set[0]]/self.df[feature_set[1]]
+            if handle_div_zero == "fill0":
+                self.df[feature_name] = self.df[feature_name].fillna(0)
+                self.df[feature_name] = self.df[feature_name].replace(np.inf, 0)
+            # Need to implement more options here...
+
+        self.interaction_features = interaction_features
+        return interaction_features
+
+
     def test_metric(self, X, y, cv_type="fold", num_folds=5, random=True):
         if cv_type in ["fold", "loo"]:
             X_array = X.values
@@ -73,6 +100,7 @@ class FeatureSelection(object):
             cv_type="fold",
             num_folds=5,
             random=True,
+            use_interaction=False,
             starting_features=None,
             best_r2=-1e5,
     ):
@@ -90,7 +118,12 @@ class FeatureSelection(object):
         if starting_features is None:
             starting_features = []
 
-        features_to_examine = [x for x in self.features if x not in starting_features]
+        if use_interaction:
+            if self.interaction_features is None:
+                self.create_interaction_features()
+            features_to_examine = [x for x in self.features+self.interaction_features if x not in starting_features]
+        else:
+            features_to_examine = [x for x in self.features if x not in starting_features]
 
         #If there are no new features left, return the starting features
         if len(features_to_examine) == 0:
@@ -116,13 +149,14 @@ class FeatureSelection(object):
             return self.forward_selection_features, best_r2
 
         starting_features.append(curr_best_feature)
-        return self.forward_selection(cv_type, num_folds, random, starting_features, best_r2)
+        return self.forward_selection(cv_type, num_folds, random, use_interaction, starting_features, best_r2)
 
     def backward_selection(
             self,
             cv_type="fold",
             num_folds=5,
             random=True,
+            use_interaction=False,
             already_removed=None,
             best_r2=-1e5,
     ):
@@ -141,7 +175,12 @@ class FeatureSelection(object):
         if already_removed is None:
             already_removed = []
 
-        features_to_examine_removal = [x for x in self.features if x not in already_removed]
+        if use_interaction:
+            if self.interaction_features is None:
+                self.create_interaction_features()
+            features_to_examine_removal = [x for x in self.features+self.interaction_features if x not in already_removed]
+        else:
+            features_to_examine_removal = [x for x in self.features if x not in already_removed]
 
         if len(features_to_examine_removal) == 0:
             self.backward_selection_features = features_to_examine_removal
@@ -165,7 +204,7 @@ class FeatureSelection(object):
             logger.info("Your backward selection features are {}.".format(features_to_examine_removal))
             return features_to_examine_removal, best_r2
         already_removed.append(curr_best_removed)
-        return self.backward_selection(cv_type, num_folds, random, already_removed, best_r2)
+        return self.backward_selection(cv_type, num_folds, random, use_interaction, already_removed, best_r2)
 
     def combinatorics_selection(
             self,
@@ -173,15 +212,23 @@ class FeatureSelection(object):
             cv_type="fold",
             num_folds=5,
             random=True,
+            use_interaction=False
     ):
+        if use_interaction:
+            if self.interaction_features is None:
+                self.create_interaction_features()
+            features = self.interaction_features+self.features
+        else:
+            features = self.features
+
         all_combinations = []
         if num_feature_limit is None:
-            num_feature_limit = len(self.features)+1
+            num_feature_limit = len(features)+1
         else:
             num_feature_limit = num_feature_limit + 1
 
         for r in range(1, num_feature_limit):
-            combinations_object = itertools.combinations(self.features, r)
+            combinations_object = itertools.combinations(features, r)
             combinations_list = [list(x) for x in combinations_object]
             all_combinations += combinations_list
 
@@ -202,16 +249,24 @@ class FeatureSelection(object):
             num_features=None,
             cv_type="fold",
             num_folds=5,
-            random=True
+            random=True,
+            use_interaction=False
     ):
+        if use_interaction:
+            if self.interaction_features is None:
+                self.create_interaction_features()
+            features = self.interaction_features+self.features
+        else:
+            features = self.features
+
         scaler = MinMaxScaler()
-        X = self.df[self.features]
+        X = self.df[features]
         X_scaled = scaler.fit_transform(X)
         y = self.df[self.target]
         y_scaled = scaler.fit_transform(y)
 
-        feature_dict = dict(zip([x for x in range(len(self.features)+1)],
-                                [None for x in range(len(self.features)+1)]))
+        feature_dict = dict(zip([x for x in range(len(features)+1)],
+                                [None for x in range(len(features)+1)]))
         for x in np.arange(-5, 3, 0.01):
             xx = 10**x
             lasso = Lasso(alpha=xx)
@@ -256,10 +311,11 @@ class FeatureSelection(object):
             cv_type="fold",
             num_folds=5,
             random=True,
+            use_interaction=False
     ):
-        self.forward_selection(cv_type, num_folds, random)
-        self.backward_selection(cv_type, num_folds, random)
-        self.lasso_selection(None, cv_type, num_folds, random)
+        self.forward_selection(cv_type, num_folds, random, use_interaction)
+        self.backward_selection(cv_type, num_folds, random, use_interaction)
+        self.lasso_selection(None, cv_type, num_folds, random, use_interaction)
 
 
         total_feature_list = self.forward_selection_features+self.backward_selection_features+self.lasso_selection_features

@@ -4,12 +4,21 @@ from mighty_regression.features import FeatureSelection
 
 logger = logging.getLogger(__file__)
 
+def test_feature_creation(data):
+    selector = FeatureSelection(
+        data,
+        ["SalePrice"],
+    )
+    prev_len = len(selector.df.columns)
+    selector.create_interaction_features()
+    assert prev_len<len(selector.df.columns)
+
 def test_forward_selection(data):
     selector = FeatureSelection(
         data,
         ["SalePrice"],
     )
-    best_features, best_r2 = selector.forward_selection(cv_type="fold", num_folds=3)
+    best_features, best_r2 = selector.forward_selection(cv_type="fold", num_folds=3, use_interaction=True)
     logger.info(best_features)
     logger.info(best_r2)
     assert len(best_features) > 0
