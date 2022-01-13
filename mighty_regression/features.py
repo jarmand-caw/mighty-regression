@@ -1,8 +1,12 @@
-from sklearn.linear_model import LinearRegression, Ridge, Lasso
+import copy
+import itertools
+import logging
+
+import numpy as np
+from sklearn.linear_model import LinearRegression, Lasso
 from sklearn.metrics import r2_score
 from sklearn.model_selection import KFold, LeaveOneOut, train_test_split
-import copy
-import logging
+from sklearn.preprocessing import MinMaxScaler
 
 logger = logging.getLogger(__file__)
 
@@ -30,6 +34,7 @@ class FeatureSelection(object):
 
         self.forward_selection_features = None
         self.backward_selection_features = None
+        self.lasso_selection_features = None
 
     def test_metric(self, X, y, cv_type="fold", num_folds=5, random=True):
         if cv_type in ["fold", "loo"]:
@@ -111,7 +116,6 @@ class FeatureSelection(object):
             return self.forward_selection_features
 
         starting_features.append(curr_best_feature)
-        logger.info(curr_best_feature)
         return self.forward_selection(cv_type, num_folds, random, starting_features, best_r2)
 
     def backward_selection(
@@ -162,4 +166,106 @@ class FeatureSelection(object):
             return features_to_examine_removal
         already_removed.append(curr_best_removed)
         return self.backward_selection(cv_type, num_folds, random, already_removed, best_r2)
+
+    def combinatorics_selection(
+            self,
+            num_feature_limit=None,
+            cv_type="fold",
+            num_folds=5,
+            random=True,
+    ):
+        all_combinations = []
+        if num_feature_limit is None:
+            num_feature_limit = len(self.features)+1
+        else:
+            num_feature_limit = num_feature_limit + 1
+
+        for r in range(1, num_feature_limit):
+            combinations_object = itertools.combinations(self.features, r)
+            combinations_list = [list(x) for x in combinations_object]
+            all_combinations += combinations_list
+
+        best_r2 = -1e5
+        best_combination = None
+        for feature_combination in all_combinations:
+            X = self.df[feature_combination]
+            y = self.df[self.target]
+            r2 = self.test_metric(X, y, cv_type, num_folds, random)
+            if r2 > best_r2:
+                best_r2 = r2
+                best_combination = feature_combination
+
+        return best_combination
+
+    def lasso_selection(
+            self,
+            num_features=None,
+            cv_type="fold",
+            num_folds=5,
+            random=True,
+    ):
+        scaler = MinMaxScaler()
+        X = self.df[self.features]
+        X_scaled = scaler.fit_transform(X)
+        y = self.df[self.target]
+        y_scaled = scaler.fit_transform(y)
+
+        feature_dict = dict(zip([x for x in range(len(self.features)+1)],
+                                [None for x in range(len(self.features)+1)]))
+        for x in np.arange(-5, 3, 0.01):
+            xx = 10**x
+            lasso = Lasso(alpha=xx)
+            model = lasso.fit(X_scaled, y_scaled)
+
+            array = np.ones((len(model.coef_), 2))
+            array = array.astype(object)
+            array[:, 0] = model.coef_
+            array[:, 1] = np.array(list(X.columns))
+            still_present_features = list(array[:, 1][np.where(np.isclose(array[:, 0].astype(float), 0))])
+
+            n_features = len(still_present_features)
+            if feature_dict[n_features] is None:
+                feature_dict[n_features] = still_present_features
+
+        # If you want a specified number of features, then just return
+        if num_features is not None:
+            self.lasso_selection_features = feature_dict[num_features]
+            return feature_dict[num_features]
+
+        # Else, lets find the combination with the best testing r2
+        best_feature_set = None
+        best_r2_score = -1e5
+        for feature_combination in feature_dict.values():
+            if feature_combination is not None:
+                X = self.df[feature_combination]
+                y = self.df[self.target]
+                r2 = self.test_metric(X, y, cv_type, num_folds, random)
+                if r2>best_r2_score:
+                    best_r2_score = r2
+                    best_feature_set = feature_combination
+
+        self.lasso_selection_features = best_feature_set
+        return best_feature_set
+
+    def bagged_selection(
+            self,
+            occurence_cutoff=2,
+            cv_type="fold",
+            num_folds=5,
+            random=True,
+    ):
+        self.forward_selection(cv_type, num_folds, random)
+        self.backward_selection(cv_type, num_folds, random)
+        self.lasso_selection(None, cv_type, num_folds, random)
+
+
+        total_feature_list = self.forward_selection_features+self.backward_selection_features+self.lasso_selection_features
+        total_feature_set = list(set(total_feature_list))
+        feature_count_dict = dict(zip(total_feature_set, [0 for x in total_feature_set]))
+        for feature in total_feature_set:
+            feature_count_dict[feature] = total_feature_list.count(feature)
+
+        all_features = [k for k,v in feature_count_dict.items() if v >= occurence_cutoff]
+        return all_features, feature_count_dict
+
 

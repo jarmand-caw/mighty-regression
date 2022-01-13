@@ -1,6 +1,8 @@
 import os
+
 import pandas as pd
 import pytest
+
 from mighty_regression.log_init import initialize_logger
 
 initialize_logger()
@@ -12,4 +14,4 @@ def directory():
 
 @pytest.fixture(scope="session")
 def data(directory):
-    return pd.read_csv(os.path.join(directory, "test_data/test.csv"))
+    return pd.read_csv(os.path.join(directory, "test_data/test.csv"), index_col=0)
