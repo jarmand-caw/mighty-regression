@@ -50,7 +50,7 @@ def test_combinatorics_selection(data):
         ["SalePrice"],
     )
 
-    best_features, best_r2 = selector.combinatorics_selection(3, cv_type="fold", num_folds=3)
+    best_features, best_r2 = selector.combinatorics_selection(3, .25, random=True)
     logger.info(best_features)
     logger.info(best_r2)
     assert len(best_features) > 0

@@ -4,9 +4,9 @@ import logging
 
 import numpy as np
 from sklearn.linear_model import LinearRegression, Lasso
-from sklearn.metrics import r2_score
-from sklearn.model_selection import KFold, LeaveOneOut, train_test_split
 from sklearn.preprocessing import MinMaxScaler
+
+from mighty_regression.metrics import get_test_metric
 
 logger = logging.getLogger(__file__)
 
@@ -46,14 +46,14 @@ class FeatureSelection(object):
         for feature_set in combinations_list:
             feature_name = "*".join(feature_set)
             interaction_features.append(feature_name)
-            self.df[feature_name] = self.df[feature_set[0]]*self.df[feature_set[1]]
+            self.df[feature_name] = self.df[feature_set[0]].values*self.df[feature_set[1]].values
 
         permutations_object = itertools.permutations(self.features, 2)
         permutations_list = [list(x) for x in permutations_object]
         for feature_set in permutations_list:
             feature_name = "/".join(feature_set)
             interaction_features.append(feature_name)
-            self.df[feature_name] = self.df[feature_set[0]]/self.df[feature_set[1]]
+            self.df[feature_name] = copy.copy(self.df[feature_set[0]].values)/copy.copy(self.df[feature_set[1]].values)
             if handle_div_zero == "fill0":
                 self.df[feature_name] = self.df[feature_name].fillna(0)
                 self.df[feature_name] = self.df[feature_name].replace(np.inf, 0)
@@ -62,38 +62,6 @@ class FeatureSelection(object):
         self.interaction_features = interaction_features
         return interaction_features
 
-
-    def test_metric(self, X, y, cv_type="fold", num_folds=5, random=True):
-        if cv_type in ["fold", "loo"]:
-            X_array = X.values
-            y_array = y.values
-
-            if cv_type == "fold":
-                splitter = KFold(num_folds)
-            else:
-                splitter = LeaveOneOut()
-
-            all_preds = []
-            all_true = []
-            for train_idx, test_idx in splitter.split(X_array):
-                X_train, X_test = X_array[train_idx], X_array[test_idx]
-                y_train, y_test = y_array[train_idx], y_array[test_idx]
-
-                regression_obj = copy.copy(self.model)
-                model = regression_obj.fit(X_train, y_train)
-                pred = model.predict(X_test)
-
-                all_preds += list(pred)
-                all_true += list(y_test)
-
-            return r2_score(all_true, all_preds)
-
-        else:
-            X_train, X_test, y_train, y_test = train_test_split(X, y, shuffle=random, random_state=42, test_size=cv_type)
-            regression_obj = copy.copy(self.model)
-            model = regression_obj.fit(X_train, y_train)
-            pred = model.predict(X_test)
-            return r2_score(y_test, pred)
 
     def forward_selection(
             self,
@@ -137,7 +105,7 @@ class FeatureSelection(object):
             this_list.append(feature)
             X = self.df[this_list]
             y = self.df[self.target]
-            r2 = self.test_metric(X, y, cv_type, num_folds, random)
+            r2 = get_test_metric(self.model, X, y, cv_type, num_folds, random)
             if r2 > best_r2:
                 best_r2 = r2
                 curr_best_feature = feature
@@ -193,7 +161,7 @@ class FeatureSelection(object):
             this_list.remove(feature)
             X = self.df[this_list]
             y = self.df[self.target]
-            r2 = self.test_metric(X, y, cv_type, num_folds, random)
+            r2 = get_test_metric(self.model, X, y, cv_type, num_folds, random)
             if r2 > best_r2:
                 best_r2 = r2
                 curr_best_removed = feature
@@ -237,7 +205,7 @@ class FeatureSelection(object):
         for feature_combination in all_combinations:
             X = self.df[feature_combination]
             y = self.df[self.target]
-            r2 = self.test_metric(X, y, cv_type, num_folds, random)
+            r2 = get_test_metric(self.model, X, y, cv_type, num_folds, random)
             if r2 > best_r2:
                 best_r2 = r2
                 best_combination = feature_combination
@@ -287,7 +255,7 @@ class FeatureSelection(object):
             self.lasso_selection_features = feature_dict[num_features]
             X = self.df[self.lasso_selection_features]
             y = self.df[self.target]
-            r2 = self.test_metric(X, y, cv_type, num_folds, random)
+            r2 = get_test_metric(self.model, X, y, cv_type, num_folds, random)
             return feature_dict[num_features], r2
 
         # Else, lets find the combination with the best testing r2
@@ -297,7 +265,7 @@ class FeatureSelection(object):
             if feature_combination is not None:
                 X = self.df[feature_combination]
                 y = self.df[self.target]
-                r2 = self.test_metric(X, y, cv_type, num_folds, random)
+                r2 = get_test_metric(self.model, X, y, cv_type, num_folds, random)
                 if r2>best_r2_score:
                     best_r2_score = r2
                     best_feature_set = feature_combination

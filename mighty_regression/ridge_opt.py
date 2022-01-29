@@ -1,14 +1,16 @@
 import copy
+import logging
 
 import numpy as np
+import optuna
 import pandas as pd
 from sklearn.linear_model import Ridge
-from sklearn.metrics import r2_score
-from sklearn.model_selection import KFold, LeaveOneOut, train_test_split
 from sklearn.preprocessing import MinMaxScaler
 
 from mighty_regression.features import FeatureSelection
+from mighty_regression.metrics import get_test_metric
 
+logger = logging.getLogger(__file__)
 
 class RidgeOpt(object):
     def __init__(
@@ -35,37 +37,61 @@ class RidgeOpt(object):
         self.best_features = None
         self.best_alpha = None
 
-    def test_metric(self, X, y, cv_type="fold", num_folds=5, random=True):
-        if cv_type in ["fold", "loo"]:
-            X_array = X.values
-            y_array = y.values
+    def brute_force_opt(
+            self,
+            features=None,
+            cv_type="fold",
+            num_folds=5,
+            random=True
+    ):
+        best_r2 = -1e5
+        best_alpha = None
 
-            if cv_type == "fold":
-                splitter = KFold(num_folds)
+        for x in np.arange(-3, 1, 0.1):
+            alpha = 10 ** x
+            ridge_reg = Ridge(alpha=alpha)
+
+            if features is None:
+                X = self.df[self.features]
             else:
-                splitter = LeaveOneOut()
+                assert type(features) == list, "Features must be a list. Currently is {}".format(type(features))
+                X = self.df[features]
 
-            all_preds = []
-            all_true = []
-            for train_idx, test_idx in splitter.split(X_array):
-                X_train, X_test = X_array[train_idx], X_array[test_idx]
-                y_train, y_test = y_array[train_idx], y_array[test_idx]
+            y = self.df[self.target]
+            r2 = get_test_metric(ridge_reg, X, y, cv_type, num_folds, random)
 
-                regression_obj = copy.copy(self.model)
-                model = regression_obj.fit(X_train, y_train)
-                pred = model.predict(X_test)
+            if r2 > best_r2:
+                best_r2 = r2
+                best_alpha = alpha
 
-                all_preds += list(pred)
-                all_true += list(y_test)
+        logger.info("Best alpha: {} with an R^2 of {}".format(best_alpha, best_r2))
+        return best_alpha, best_r2
 
-            return r2_score(all_true, all_preds)
-
+    def feature_select_given_alpha(
+            self,
+            alpha,
+            selection_type="backward",
+            cv_type="fold",
+            num_folds=5,
+            random=True
+    ):
+        selector = FeatureSelection(
+            copy.copy(self.df),
+            self.target,
+            self.features,
+            model=Ridge(alpha)
+        )
+        if selection_type == "backward":
+            features, r2 = selector.backward_selection(cv_type, num_folds, random)
+        elif selection_type == "forward":
+            features, r2 = selector.forward_selection(cv_type, num_folds, random)
+        elif selection_type == "lasso":
+            features, r2 = selector.lasso_selection(None, cv_type, num_folds, random)
         else:
-            X_train, X_test, y_train, y_test = train_test_split(X, y, shuffle=random, random_state=42, test_size=cv_type)
-            regression_obj = copy.copy(self.model)
-            model = regression_obj.fit(X_train, y_train)
-            pred = model.predict(X_test)
-            return r2_score(y_test, pred)
+            raise NotImplementedError("selection type not implemented. Options are forward, backward, lasso")
+
+        return features, r2
+
 
     def brute_force_with_selection(
             self,
@@ -80,20 +106,7 @@ class RidgeOpt(object):
 
         for x in np.arange(-3, 1, 0.1):
             alpha = 10**x
-            selector = FeatureSelection(
-                copy.copy(self.df),
-                self.target,
-                self.features,
-                model=Ridge(alpha)
-            )
-            if selection_type == "backward":
-                features, r2 = selector.backward_selection(cv_type, num_folds, random)
-            elif selection_type == "forward":
-                features, r2 = selector.forward_selection(cv_type, num_folds, random)
-            elif selection_type == "lasso":
-                features, r2 = selector.lasso_selection(None, cv_type, num_folds, random)
-            else:
-                raise NotImplementedError("selection type not implemented. Options are forward, backward, lasso")
+            features, r2 = self.feature_select_given_alpha(alpha, selection_type, cv_type, num_folds, random)
 
             if r2 > best_r2:
                 best_r2 = r2
@@ -102,6 +115,59 @@ class RidgeOpt(object):
 
         self.best_alpha = best_alpha
         self.best_features = best_features
+
+        logger.info("Best feature/alpha combo is {}/{} with an R^2 of {}".format(best_features, best_alpha, best_r2))
+        return best_alpha, best_features, best_r2
+
+    def optuna_opt(
+            self,
+            features=None,
+            num_trials=100,
+            cv_type="fold",
+            num_folds=5,
+            random=True
+    ):
+        def objective(trial):
+            alpha = trial.suggest_float('alpha', -1e-4, 10, log=True)
+            ridge_reg = Ridge(alpha=alpha)
+            if features is None:
+                X = self.df[self.features]
+            else:
+                assert type(features) == list, "Features must be a list. Currently is {}".format(type(features))
+                X = self.df[features]
+            y = self.df[self.target]
+            r2 = get_test_metric(ridge_reg, X, y, cv_type, num_folds, random)
+            return r2
+
+        study = optuna.create_study(direction="maximize")
+        study.optimize(objective, n_trials=num_trials)
+        best_alpha = study.best_params["alpha"]
+        best_r2 = study.best_trial.value
+
+        logger.info("Best alpha: {} with an R^2 of {}".format(best_alpha, best_r2))
+
+        return best_alpha, best_r2
+
+    def optuna_with_selection(
+            self,
+            num_trials=100,
+            selection_type="backward",
+            cv_type="fold",
+            num_folds=5,
+            random=True
+    ):
+        def objective(trial):
+            alpha = trial.suggest_float('alpha', -1e-4, 10, log=True)
+            _, r2 = self.feature_select_given_alpha(alpha, selection_type, cv_type, num_folds, random)
+            return r2
+
+        study = optuna.create_study(direction="maximize")
+        study.optimize(objective, n_trials=num_trials)
+        best_alpha = study.best_params["alpha"]
+        best_r2 = study.best_trial.value
+        best_features, _ = self.feature_select_given_alpha(best_alpha, selection_type, cv_type, num_folds, random)
+
+        logger.info("Best feature/alpha combo is {}/{} with an R^2 of {}".format(best_features, best_alpha, best_r2))
 
         return best_alpha, best_features, best_r2
 
